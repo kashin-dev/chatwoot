@@ -11,6 +11,8 @@ class Webhooks::WhatsappEventsJob < ApplicationJob
     else
       Whatsapp::IncomingMessageService.new(inbox: channel.inbox, params: params).perform
     end
+
+    forward_webhook_to_additional_endpoints(params)
   end
 
   private
@@ -44,5 +46,43 @@ class Webhooks::WhatsappEventsJob < ApplicationJob
     channel = Channel::Whatsapp.find_by(phone_number: phone_number)
     # validate to ensure the phone number id matches the whatsapp channel
     return channel if channel && channel.provider_config['phone_number_id'] == phone_number_id
+  end
+
+  def forward_webhook_to_additional_endpoints(params)
+    additional_endpoints = ENV['WHATSAPP_WEBHOOK_URLS']&.split(',')&.map(&:strip)
+    return if additional_endpoints.blank?
+
+    additional_endpoints.each do |endpoint|
+      begin
+        # Validate URL format
+        uri = URI.parse(endpoint)
+        raise URI::InvalidURIError unless uri.is_a?(URI::HTTP) || uri.is_a?(URI::HTTPS)
+
+        # Make the request with timeout and specific error handling
+        response = HTTParty.post(
+          endpoint,
+          body: params.to_json,
+          headers: { 
+            'Content-Type' => 'application/json',
+            'User-Agent' => 'Chatwoot-Webhook-Forwarder'
+          },
+          timeout: 10,
+          verify: true  # Verify SSL certificates
+        )
+
+        unless response.success?
+          Rails.logger.error "Failed to forward WhatsApp webhook to #{endpoint}. Status: #{response.code}"
+        end
+
+      rescue URI::InvalidURIError
+        Rails.logger.error "Invalid webhook URL: #{endpoint}"
+      rescue HTTParty::TimeoutError
+        Rails.logger.error "Timeout forwarding WhatsApp webhook to #{endpoint}"
+      rescue HTTParty::ResponseError => e
+        Rails.logger.error "HTTP error forwarding WhatsApp webhook to #{endpoint}: #{e.message}"
+      rescue StandardError => e
+        Rails.logger.error "Error forwarding WhatsApp webhook to #{endpoint}: #{e.message}"
+      end
+    end
   end
 end
