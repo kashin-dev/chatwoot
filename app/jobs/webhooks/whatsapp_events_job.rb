@@ -16,7 +16,7 @@ class Webhooks::WhatsappEventsJob < ApplicationJob
       Whatsapp::IncomingMessageService.new(inbox: channel.inbox, params: params).perform
     end
 
-    forward_webhook_to_additional_endpoints(params)
+    #forward_webhook_to_additional_endpoints(params)
   end
 
   private
